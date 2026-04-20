@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const nodemailer = require('nodemailer');
 const app = express();
 
 app.use(cors({ origin: '*' }));
@@ -13,31 +14,25 @@ app.get('/', (req, res) => {
 app.get('/search', async (req, res) => {
   const { branche, city, maxRating, maxResults } = req.query;
   const apiKey = process.env.PLACES_API_KEY;
-
   if (!apiKey) return res.status(500).json({ error: 'API Key fehlt' });
 
   try {
-    // Mehrere Suchanfragen um mehr Ergebnisse zu bekommen
     const queries = [
       `${branche} ${city}`,
-      `${branche} Bewertung schlecht ${city}`,
       `${branche} ${city} Deutschland`
     ];
 
     let allResults = [];
-
     for (const query of queries) {
       const response = await fetch(
         `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&language=de&region=de&key=${apiKey}`
       );
       const data = await response.json();
-
       if (data.status === 'OK' && data.results) {
         allResults = allResults.concat(data.results);
       }
     }
 
-    // Duplikate entfernen
     const seen = new Set();
     allResults = allResults.filter(p => {
       if (seen.has(p.place_id)) return false;
@@ -45,18 +40,12 @@ app.get('/search', async (req, res) => {
       return true;
     });
 
-    console.log('Alle Ergebnisse:', allResults.length);
-    console.log('Ratings:', allResults.map(p => p.rating).join(', '));
-
-    // Nach Rating sortieren (schlechteste zuerst)
     allResults.sort((a, b) => (a.rating || 5) - (b.rating || 5));
 
-    // Filter anwenden - wenn keine Ergebnisse unter maxRating, dann alle zurückgeben
-    let filtered = allResults.filter(p => 
+    let filtered = allResults.filter(p =>
       p.rating && p.rating <= parseFloat(maxRating) && p.user_ratings_total >= 10
     );
 
-    // Falls nichts gefunden, nimm die schlechtesten verfügbaren
     if (filtered.length === 0) {
       filtered = allResults.filter(p => p.rating && p.user_ratings_total >= 10);
     }
@@ -69,11 +58,36 @@ app.get('/search', async (req, res) => {
       branche: branche
     }));
 
-    console.log('Gefilterte Ergebnisse:', filtered.length);
     res.json(filtered);
-
   } catch (err) {
-    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/send-mail', async (req, res) => {
+  const { to, subject, text } = req.body;
+
+  if (!to || !text) return res.status(400).json({ error: 'Empfänger und Text fehlen' });
+
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.ionos.de',
+    port: 587,
+    secure: false,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS
+    }
+  });
+
+  try {
+    await transporter.sendMail({
+      from: `Ernst Digital <${process.env.SMTP_USER}>`,
+      to,
+      subject: subject || 'Ihre Google-Bewertungen – Ernst Digital',
+      text
+    });
+    res.json({ success: true });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

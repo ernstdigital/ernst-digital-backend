@@ -2,12 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const app = express();
 
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
+app.use(cors({ origin: '*' }));
 app.options('*', cors());
 app.use(express.json());
 
@@ -21,12 +16,18 @@ app.get('/search', async (req, res) => {
 
   if (!apiKey) return res.status(500).json({ error: 'API Key fehlt' });
 
-  const query = `${branche} in ${city} Deutschland`;
-  const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&language=de&key=${apiKey}`;
-
   try {
-    const response = await fetch(url);
+    const response = await fetch(
+      `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(branche + ' ' + city)}&language=de&region=de&key=${apiKey}`
+    );
     const data = await response.json();
+
+    console.log('Places API Status:', data.status);
+    console.log('Ergebnisse gesamt:', data.results?.length);
+
+    if (data.status !== 'OK') {
+      return res.status(500).json({ error: 'Places API Fehler: ' + data.status, details: data.error_message });
+    }
 
     const filtered = (data.results || [])
       .filter(p => p.rating && p.rating <= parseFloat(maxRating) && p.user_ratings_total >= 10)
@@ -39,8 +40,11 @@ app.get('/search', async (req, res) => {
         branche: branche
       }));
 
+    console.log('Gefilterte Ergebnisse:', filtered.length);
     res.json(filtered);
+
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
